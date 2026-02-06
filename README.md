@@ -54,40 +54,80 @@ cp .env.example .env
 ### 3. 启动 Prefect Server
 
 ```bash
-# 方式 1: 直接启动（开发环境）
-prefect server start
+# 使用 uv 启动（推荐）
+uv run prefect server start
 
 # 方式 2: Docker Compose（生产环境）
 # 参考 Prefect 官方文档
 ```
 
-### 4. 设置 Prefect 环境
+**保持此终端窗口运行！**
+
+### 4. 配置 Prefect 环境
+
+在新的终端窗口中：
 
 ```bash
-chmod +x scripts/setup_prefect.sh
-./scripts/setup_prefect.sh
+# 设置 Prefect API URL
+uv run prefect config set PREFECT_API_URL=http://127.0.0.1:4200/api
+
+# 创建 Work Pool（如果不存在）
+uv run prefect work-pool create dify-workflow-pool --type process
 ```
 
 ### 5. 启动 Worker
 
+在新的终端窗口中运行（保持运行）：
+
 ```bash
-prefect worker start --pool dify-workflow-pool
+uv run prefect worker start --pool dify-workflow-pool
 ```
+
+**保持此终端窗口运行！**
 
 ### 6. 部署任务
 
-```bash
-# 使用 uv 运行（推荐）
-uv run python deployments/daily_report.py
-uv run python deployments/weekly_report.py
+在新的终端窗口中：
 
-# 或激活虚拟环境后运行
-source .venv/bin/activate  # Linux/macOS
-# 或
-.venv\Scripts\activate  # Windows
-python deployments/daily_report.py
-python deployments/weekly_report.py
+```bash
+# 部署每日报告（调试模式：每30秒执行一次）
+uv run python deployments/daily_report.py
+
+# 部署每周报告（每周一 03:00 执行）
+uv run python deployments/weekly_report.py
 ```
+
+### 7. 验证定时任务
+
+#### 方法 1: 使用验证脚本（推荐）
+
+```bash
+chmod +x scripts/verify.sh
+./scripts/verify.sh
+```
+
+#### 方法 2: 访问 Prefect UI
+
+打开浏览器访问：http://127.0.0.1:4200
+
+- 查看 **Deployments** 确认任务已部署
+- 查看 **Flow Runs** 确认任务正在执行
+- 等待30秒后应该能看到新的运行记录（每日报告）
+
+#### 方法 3: 命令行验证
+
+```bash
+# 查看所有 Deployments
+uv run prefect deployment ls
+
+# 查看最近的 Flow Runs
+uv run prefect flow-run ls --limit 10
+
+# 手动触发一次测试
+uv run prefect deployment run "fetch-workflow-logs-flow/daily-workflow-report-debug"
+```
+
+详细验证步骤请参考 [启动和验证指南.md](./启动和验证指南.md)
 
 ## 使用方式
 

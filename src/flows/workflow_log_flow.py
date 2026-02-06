@@ -88,6 +88,20 @@ def fetch_workflow_logs_flow(
         if not base_url or not api_token:
             raise ValueError("必须提供 base_url 和 api_token（通过参数或环境变量）")
     
+    # 打印关键配置（用于排查问题）
+    logger.info("=" * 60)
+    logger.info("关键配置信息:")
+    logger.info(f"  base_url: {base_url}")
+    logger.info(f"  api_token: {api_token[:10]}...{api_token[-4:] if len(api_token) > 14 else '***'}")
+    logger.info(f"  app_id: {app_id or '(未配置)'}")
+    logger.info(f"  时间范围: {created_at_after} ~ {created_at_before}")
+    logger.info(f"  输出格式: {output_format}")
+    logger.info(f"  输出目录: {output_dir}")
+    logger.info(f"  获取所有: {fetch_all}")
+    logger.info(f"  包含详情: {with_details}")
+    logger.info(f"  包含节点执行: {with_node_executions}")
+    logger.info("=" * 60)
+    
     # Task 1: 获取日志
     logs_result = fetch_logs_task(
         base_url=base_url,

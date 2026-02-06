@@ -44,6 +44,10 @@ def fetch_logs_task(
     """
     logger.info("开始获取工作流日志")
     
+    # 打印请求参数（用于排查问题）
+    logger.info(f"请求参数: base_url={base_url}, created_at_after={created_at_after}, created_at_before={created_at_before}")
+    logger.info(f"其他参数: keyword={keyword}, status={status}, fetch_all={fetch_all}, limit={limit}")
+    
     fetcher = WorkflowLogFetcher(base_url=base_url, api_token=api_token)
     
     if fetch_all:

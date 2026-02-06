@@ -143,10 +143,17 @@ class WorkflowLogFetcher:
         if created_by_account:
             params["created_by_account"] = created_by_account
 
+        # 打印请求信息（用于排查问题）
+        logger.info(f"请求 URL: {url}")
+        logger.info(f"请求参数: {params}")
+        
         try:
             response = self.session.get(url, params=params, timeout=30)
+            logger.debug(f"响应状态码: {response.status_code}")
             response.raise_for_status()
-            return response.json()
+            result = response.json()
+            logger.info(f"响应数据: total={result.get('total', 0)}, has_more={result.get('has_more', False)}, data_count={len(result.get('data', []))}")
+            return result
         except requests.exceptions.RequestException as e:
             status_code = getattr(e.response, "status_code", None) if hasattr(e, "response") else None
             response_text = getattr(e.response, "text", None) if hasattr(e, "response") else None

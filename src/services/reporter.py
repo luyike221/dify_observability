@@ -97,9 +97,9 @@ class ReportGenerator:
             user_query = ""
             ai_answer = ""
             attachments = []
-            knowledge_base_name = ""
-            document_names = []
-            text_segments = []
+            # 不使用去重，直接按顺序存储所有查到的内容（包括重复）
+            # 每个片段都单独记录，保持原始顺序
+            segments_list = []  # 存储所有片段，格式: (知识库名称, 文档名称, 片段内容, 相似度)
             
             if run_detail:
                 # 处理 inputs
@@ -149,18 +149,16 @@ class ReportGenerator:
                                 content = item.get("content", "")
                                 score = metadata.get("score", 0)
                                 
-                                if dataset_name and dataset_name not in knowledge_base_name:
-                                    if knowledge_base_name:
-                                        knowledge_base_name += "; " + dataset_name
-                                    else:
-                                        knowledge_base_name = dataset_name
-                                
-                                if document_name and document_name not in document_names:
-                                    document_names.append(document_name)
-                                
-                                if content:
-                                    segment_text = f"相似度:{score:.4f} {content[:200]}"
-                                    text_segments.append(segment_text)
+                                # 不去重，直接记录所有查到的内容（包括重复）
+                                if dataset_name and document_name and content:
+                                    clean_dataset = dataset_name.replace("...", "").strip()
+                                    clean_document = document_name.replace("...", "").strip()
+                                    
+                                    # 相似度和文本内容换行显示
+                                    segment_text = f"相似度:{score:.4f}\n{content[:200]}"
+                                    
+                                    # 直接追加，不去重
+                                    segments_list.append((clean_dataset, clean_document, segment_text))
             
             # 统计用户信息
             if user_id:
@@ -198,28 +196,63 @@ class ReportGenerator:
                                 price = 0
                             total_cost += price
             
-            # 构建问答对
-            qa_data = {
-                "序号": idx,
-                "用户id": user_id or "",
-                "会话id": session_id or "",
-                "问题排序": 1,
-                "用户提问": user_query,
-                "附件名称": "; ".join(attachments) if attachments else "",
-                "AI回答": ai_answer[:5000] if len(ai_answer) > 5000 else ai_answer,
-                "知识库名称": knowledge_base_name,
-                "引用的文档名称": "; ".join(document_names[:5]),
-                "文本片段内容1": text_segments[0] if text_segments else "",
-                "文本片段内容2": text_segments[1] if len(text_segments) > 1 else "",
-                "文本片段内容N": "; ".join(text_segments[2:10]) if len(text_segments) > 2 else "",
-                "创建时间": format_timestamp(created_at) if created_at else "",
-                "created_at": created_at,
-            }
-            
-            if session_id:
-                session_qa_map[session_id].append(qa_data)
+            # 构建问答对：按知识库和文档组合展开为多行
+            # 不去重，直接按查到的内容显示（包括重复）
+            if not segments_list:
+                # 没有知识库的情况，生成一行空数据
+                qa_data = {
+                    "序号": idx,
+                    "用户id": user_id or "",
+                    "会话id": session_id or "",
+                    "问题排序": 1,
+                    "用户提问": user_query,
+                    "附件名称": "; ".join(attachments) if attachments else "",
+                    "AI回答": ai_answer[:5000] if len(ai_answer) > 5000 else ai_answer,
+                    "知识库名称": "",
+                    "引用的文档名称": "",
+                    "创建时间": format_timestamp(created_at) if created_at else "",
+                    "created_at": created_at,
+                }
+                if session_id:
+                    session_qa_map[session_id].append(qa_data)
+                else:
+                    qa_pairs.append(qa_data)
             else:
-                qa_pairs.append(qa_data)
+                # 按知识库和文档组合分组（但不去重，每个组合可能有多个片段）
+                # 使用字典按 (知识库, 文档) 分组，但保留所有片段（包括重复）
+                kb_doc_segments = {}  # {(知识库, 文档): [片段列表]}
+                
+                for kb_name, doc_name, segment_text in segments_list:
+                    kb_doc_key = (kb_name, doc_name)
+                    if kb_doc_key not in kb_doc_segments:
+                        kb_doc_segments[kb_doc_key] = []
+                    kb_doc_segments[kb_doc_key].append(segment_text)
+                
+                # 为每个知识库-文档组合创建一行
+                for (kb_name, doc_name), doc_segments in kb_doc_segments.items():
+                    # 动态生成文本片段列（每个片段一列）
+                    qa_data = {
+                        "序号": idx,
+                        "用户id": user_id or "",
+                        "会话id": session_id or "",
+                        "问题排序": 1,
+                        "用户提问": user_query,
+                        "附件名称": "; ".join(attachments) if attachments else "",
+                        "AI回答": ai_answer[:5000] if len(ai_answer) > 5000 else ai_answer,
+                        "知识库名称": kb_name,
+                        "引用的文档名称": doc_name,
+                        "创建时间": format_timestamp(created_at) if created_at else "",
+                        "created_at": created_at,
+                    }
+                    
+                    # 动态添加文本片段列（每个片段一列，不去重）
+                    for i, segment in enumerate(doc_segments, 1):
+                        qa_data[f"文本片段内容{i}"] = segment
+                    
+                    if session_id:
+                        session_qa_map[session_id].append(qa_data)
+                    else:
+                        qa_pairs.append(qa_data)
         
         # 按会话ID分组，计算问题排序
         for session_id, session_qas in session_qa_map.items():
@@ -289,28 +322,60 @@ class ReportGenerator:
         report_files.append(str(user_list_file))
         
         # 4. 生成用户问答对 CSV
+        # 先统计所有问答对中，每个知识库-文档组合最多有多少个文本片段
+        max_segments = 0
+        for qa in qa_pairs:
+            # 统计该行有多少个文本片段列
+            segment_count = 0
+            for key in qa.keys():
+                if key.startswith("文本片段内容"):
+                    try:
+                        num = int(key.replace("文本片段内容", ""))
+                        segment_count = max(segment_count, num)
+                    except ValueError:
+                        pass
+            max_segments = max(max_segments, segment_count)
+        
+        # 至少要有3列（文本片段内容1、2、N），如果超过3个，则动态增加列
+        max_segments = max(max_segments, 3)
+        
+        # 构建列名
+        base_columns = [
+            "序号", "用户id", "会话id", "问题排序（同一个会话ID，提问先后顺序）",
+            "用户提问", "附件名称：名称.后缀", "AI回答", "知识库名称", "引用的文档名称",
+        ]
+        # 动态生成文本片段列名
+        segment_columns = [f"文本片段内容{i}（相似度+文本内容）" for i in range(1, max_segments + 1)]
+        all_columns = base_columns + segment_columns + ["创建时间"]
+        
         qa_file = self.output_dir / "问答类应用数-用户问答对.csv"
         with open(qa_file, "w", encoding="utf-8-sig", newline="") as f:
             writer = csv.writer(f)
-            writer.writerow([""] * 13)
-            writer.writerow([
-                "序号", "用户id", "会话id", "问题排序（同一个会话ID，提问先后顺序）",
-                "用户提问", "附件名称：名称.后缀", "AI回答", "知识库名称", "引用的文档名称",
-                "文本片段内容1（相似度+文本内容）", "文本片段内容2（相似度+文本内容）",
-                "文本片段内容N（相似度+文本内容）", "创建时间"
-            ])
-            writer.writerow([""] * 13)
+            writer.writerow([""] * len(all_columns))
+            writer.writerow(all_columns)
+            writer.writerow([""] * len(all_columns))
             
             for qa in qa_pairs:
-                writer.writerow([
-                    qa["序号"], qa["用户id"], qa["会话id"], qa["问题排序"],
-                    qa["用户提问"], qa["附件名称"], qa["AI回答"], qa["知识库名称"], qa["引用的文档名称"],
-                    qa["文本片段内容1"], qa["文本片段内容2"], qa["文本片段内容N"], qa["创建时间"],
-                ])
+                row = [
+                    qa.get("序号", ""),
+                    qa.get("用户id", ""),
+                    qa.get("会话id", ""),
+                    qa.get("问题排序", ""),
+                    qa.get("用户提问", ""),
+                    qa.get("附件名称", ""),
+                    qa.get("AI回答", ""),
+                    qa.get("知识库名称", ""),
+                    qa.get("引用的文档名称", ""),
+                ]
+                # 动态填充文本片段列
+                for i in range(1, max_segments + 1):
+                    row.append(qa.get(f"文本片段内容{i}", ""))
+                row.append(qa.get("创建时间", ""))
+                writer.writerow(row)
             
-            writer.writerow([""] * 13)
-            writer.writerow(["注：此处区分是否可上传附件、是否引用RAG知识库，若无内容，为空即可。"] + [""] * 12)
-            writer.writerow([""] * 13)
+            writer.writerow([""] * len(all_columns))
+            writer.writerow(["注：此处区分是否可上传附件、是否引用RAG知识库，若无内容，为空即可。"] + [""] * (len(all_columns) - 1))
+            writer.writerow([""] * len(all_columns))
         
         report_files.append(str(qa_file))
         
